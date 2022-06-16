@@ -1,5 +1,5 @@
 import os
-
+import flask
 from flask import Flask
 
 app = Flask(__name__)
@@ -9,6 +9,15 @@ app = Flask(__name__)
 def hello_world():
     name = os.environ.get("NAME", "World")
     return f"<p>Hello, {name}!</p>"
+
+
+@app.route("/api/v1/")
+def get_entry():
+    """Return entries."""
+    context = {
+        "data": "/api/v1/data/",
+    }
+    return flask.jsonify(**context)
 
 
 if __name__ == '__main__':
