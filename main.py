@@ -1,41 +1,39 @@
-import os
-import flask
-from flask import Flask, request
-import time
+# Copyright 2018 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-app = Flask(__name__)
+from flask import render_template, Response
 
+from app import get_index_context, init_connection_pool, migrate_db, save_vote
 
-@app.route("/")
-def hello_world():
-    name = os.environ.get("NAME", "World")
-    return f"<p>Hello, {name}!</p>"
+############ TABS vs. SPACES App for Cloud Functions ############
 
-
-@app.route("/api/v1/")
-def get_entry():
-    """Return entries."""
-    context = {
-        "data": "/api/v1/data/",
-    }
-    return flask.jsonify(**context)
-
-
-@app.route("/api/v1/data/heart_rate/", methods=['POST'])
-def post_heart_rate():
-    """Return fatigue level."""
-    print(request.json)
-    username = request.json['username']
-    heart_rate = request.json['heart_rate']
-    timestamp = request.json['timestamp']
-    print(f"{timestamp} {username} heart rate: {heart_rate}")
-    context = {
-        "timestamp": time.time(),
-        "fatigue_bool": True,
-        "fatigue_level": 30
-    }
-    return flask.jsonify(**context)
+# initiate a connection pool to a Cloud SQL database
+db = init_connection_pool()
+# creates required 'votes' table in database (if it does not exist)
+migrate_db(db)
 
 
-if __name__ == '__main__':
-    app.run(debug=True, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+def votes(request):
+    if request.method == "GET":
+        context = get_index_context(db)
+        return render_template("index.html", **context)
+
+    if request.method == "POST":
+        team = request.form["team"]
+        return save_vote(db, team)
+
+    return Response(
+        response="Invalid http request. Method not allowed, must be 'GET' or 'POST'",
+        status=400,
+    )
