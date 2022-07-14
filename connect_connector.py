@@ -70,6 +70,8 @@ def connect_with_connector() -> sqlalchemy.engine.base.Engine:
         # Connections that live longer than the specified amount of time will be
         # re-established
         pool_recycle=1800,  # 30 minutes
+
+        echo=True,
         # [END_EXCLUDE]
     )
     return pool

@@ -1,23 +1,11 @@
-# Copyright 2022 Google LLC
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 import datetime
 import logging
 import os
+import time
 from typing import Dict
 
-from flask import Flask, render_template, request, Response
+import flask
+from flask import Flask, request, Response
 
 import sqlalchemy
 
@@ -28,6 +16,10 @@ from connect_unix import connect_unix_socket
 app = Flask(__name__)
 
 logger = logging.getLogger()
+
+############
+# Database #
+############
 
 
 def init_connection_pool() -> sqlalchemy.engine.base.Engine:
@@ -48,114 +40,289 @@ def init_connection_pool() -> sqlalchemy.engine.base.Engine:
     )
 
 
-# create 'votes' table in database if it does not already exist
+# create tables in database if not already exist
 def migrate_db(db: sqlalchemy.engine.base.Engine) -> None:
     with db.connect() as conn:
+
+        # user table
         conn.execute(
-            "CREATE TABLE IF NOT EXISTS votes "
-            "( vote_id SERIAL NOT NULL, time_cast timestamp NOT NULL, "
-            "candidate VARCHAR(6) NOT NULL, PRIMARY KEY (vote_id) );"
+            "CREATE TABLE IF NOT EXISTS users "
+            "(user_id INTEGER AUTO_INCREMENT PRIMARY KEY, "
+            "fullname VARCHAR(40) NOT NULL, "
+            "group_id VARCHAR(20) NOT NULL, "
+            "age INTEGER NOT NULL, "
+            "max_heart_rate INTEGER NOT NULL, "
+            "rest_heart_rate INTEGER NOT NULL, "
+            "hrr_cp INTEGER NOT NULL, "
+            "awc_tot INTEGER NOT NULL, "
+            "k_value INTEGER NOT NULL, "
+            "fatigue_level INTEGER NOT NULL, "
+            "last_update DATETIME, "
+            "created DATETIME DEFAULT CURRENT_TIMESTAMP); "
+        )
+
+        # heart_rates table
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS heart_rates "
+            "(user_id INTEGER NOT NULL, "
+            "heart_rate INTEGER NOT NULL, "
+            "timestamp DATETIME NOT NULL, "
+            "FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE); "
+        )
+
+        # fatigue_levels table
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS fatigue_levels "
+            "(user_id INTEGER NOT NULL, "
+            "fatigue_level INTEGER NOT NULL, "
+            "timestamp DATETIME NOT NULL, "
+            "FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE); "
         )
 
 
-# This global variable is declared with a value of `None`, instead of calling
-# `init_db()` immediately, to simplify testing. In general, it
-# is safe to initialize your database connection pool when your script starts
-# -- there is no need to wait for the first request.
-db = None
+# initiate a connection pool to a Cloud SQL database
+db = init_connection_pool()
+# creates required 'votes' table in database (if it does not exist)
+migrate_db(db)
 
 
-# init_db lazily instantiates a database connection pool. Users of Cloud Run or
-# App Engine may wish to skip this lazy instantiation and connect as soon
-# as the function is loaded. This is primarily to help testing.
-@app.before_first_request
-def init_db() -> sqlalchemy.engine.base.Engine:
-    global db
-    db = init_connection_pool()
-    migrate_db(db)
+############
+# REST API #
+############
 
 
+# index GET
 @app.route("/", methods=["GET"])
-def render_index() -> str:
-    context = get_index_context(db)
-    return render_template("index.html", **context)
+def hello_world():
+    name = os.environ.get("NAME", "World")
+    return f"<p>Hello, {name}!</p>"
 
 
-@app.route("/votes", methods=["POST"])
-def cast_vote() -> Response:
-    team = request.form['team']
-    return save_vote(db, team)
+# user
+@app.route("/api/v1/user/login/", methods=['POST'])
+def post_user_login():
+    """Receive user name and check the database.
+    If exists, return with user info;
+    if not exists, return new user."""
 
-
-# get_index_context gets data required for rendering HTML application
-def get_index_context(db: sqlalchemy.engine.base.Engine) -> Dict:
-    votes = []
+    fullname = request.json['fullname']
 
     with db.connect() as conn:
-        # Execute the query and fetch all results
-        recent_votes = conn.execute(
-            "SELECT candidate, time_cast FROM votes ORDER BY time_cast DESC LIMIT 5"
-        ).fetchall()
-        # Convert the results into a list of dicts representing votes
-        for row in recent_votes:
-            votes.append({"candidate": row[0], "time_cast": row[1]})
-
         stmt = sqlalchemy.text(
-            "SELECT COUNT(vote_id) FROM votes WHERE candidate=:candidate"
+            "SELECT * FROM users WHERE fullname=:fullname"
         )
-        # Count number of votes for tabs
-        tab_result = conn.execute(stmt, candidate="TABS").fetchone()
-        tab_count = tab_result[0]
-        # Count number of votes for spaces
-        space_result = conn.execute(stmt, candidate="SPACES").fetchone()
-        space_count = space_result[0]
+        query = conn.execute(stmt, fullname=fullname).fetchone()
+        if not query:
+            context = {
+                "fullname": fullname,
+                "created": False
+            }
+        else:
+            context = {
+                "fullname": fullname,
+                "created": True,
+                "user_id": query['user_id'],
+                "group_id": query['group_id'],
+                "age": query['age'],
+                "max_heart_rate": query['max_heart_rate'],
+                "rest_heart_rate": query['rest_heart_rate'],
+                "hrr_cp": query['hrr_cp'],
+                "awc_tot": query['awc_tot'],
+                "k_value": query['k_value'],
+            }
+        return flask.jsonify(**context)
 
-    return {
-        "space_count": space_count,
-        "recent_votes": votes,
-        "tab_count": tab_count,
-    }
 
+@app.route("/api/v1/user/new/", methods=['POST'])
+def post_user_new():
+    """Receive user info, group_id, and create new user in database.
+    Return user_id."""
 
-# save_vote saves a vote to the database that was retrieved from form data
-def save_vote(db: sqlalchemy.engine.base.Engine, team: str) -> Response:
-    time_cast = datetime.datetime.now(tz=datetime.timezone.utc)
-    # Verify that the team is one of the allowed options
-    if team != "TABS" and team != "SPACES":
-        logger.warning(f"Received invalid 'team' property: '{team}'")
-        return Response(
-            response="Invalid team specified. Should be one of 'TABS' or 'SPACES'",
-            status=400,
-        )
-
-    # [START cloud_sql_mysql_sqlalchemy_connection]
-    # Preparing a statement before hand can help protect against injections.
     stmt = sqlalchemy.text(
-        "INSERT INTO votes (time_cast, candidate) VALUES (:time_cast, :candidate)"
+        """INSERT INTO users
+        (fullname, group_id, age, max_heart_rate, rest_heart_rate, hrr_cp, awc_tot, k_value, fatigue_level) 
+        VALUES (:fullname, :group_id, :age, :max_heart_rate, :rest_heart_rate, :hrr_cp, :awc_tot, :k_value, -1)"""
     )
     try:
-        # Using a with statement ensures that the connection is always released
-        # back into the pool at the end of statement (even if an error occurs)
         with db.connect() as conn:
-            conn.execute(stmt, time_cast=time_cast, candidate=team)
+            result = conn.execute(stmt,
+                                  fullname=request.json['fullname'],
+                                  group_id=request.json['group_id'],
+                                  age=request.json['age'],
+                                  max_heart_rate=request.json['max_heart_rate'],
+                                  rest_heart_rate=request.json['rest_heart_rate'],
+                                  hrr_cp=request.json['hrr_cp'],
+                                  awc_tot=request.json['awc_tot'],
+                                  k_value=request.json['k_value'])
+            user_id = result.lastrowid
+            context = {
+                "timestamp": time.time(),
+                "user_id": user_id
+            }
+            return flask.jsonify(**context)
+
     except Exception as e:
-        # If something goes wrong, handle the error in this section. This might
-        # involve retrying or adjusting parameters depending on the situation.
-        # [START_EXCLUDE]
         logger.exception(e)
         return Response(
             status=500,
-            response="Unable to successfully cast vote! Please check the "
+            response="Unable to successfully create user! Please check the "
             "application logs for more details.",
         )
-        # [END_EXCLUDE]
-    # [END cloud_sql_mysql_sqlalchemy_connection]
 
-    return Response(
-        status=200,
-        response=f"Vote successfully cast for '{team}' at time {time_cast}!",
+
+# upload
+@app.route("/api/v1/upload/heart_rate/", methods=['POST'])
+def post_heart_rate():
+    """Receive heart rate and user info and save to database.
+    Return acknowledgement."""
+    print(request.json)
+
+    stmt = sqlalchemy.text(
+        """INSERT INTO heart_rates (user_id, heart_rate, timestamp) 
+        VALUES (:user_id, :heart_rate, :timestamp)"""
     )
+    try:
+        user_id = request.json['user_id']
+        heart_rate = request.json['heart_rate']
+        timestamp = int(request.json['timestamp'])
+
+        print(f"{timestamp} {user_id} heart rate: {heart_rate}")
+
+        with db.connect() as conn:
+            conn.execute(stmt,
+                         user_id=user_id,
+                         heart_rate=heart_rate,
+                         timestamp=datetime.datetime.utcfromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S'))
+            return Response(
+                response="Success",
+                status=200,
+            )
+
+    except Exception as e:
+        logger.exception(e)
+        return Response(
+            status=500,
+            response="Unable to successfully upload data! Please check the "
+            "application logs for more details.",
+        )
+
+
+@app.route("/api/v1/upload/fatigue/", methods=['POST'])
+def post_fatigue():
+    """Receive fatigue and user info and save to database.
+    Return acknowledgement."""
+    print(request.json)
+
+    stmt_fatigue = sqlalchemy.text(
+        """INSERT INTO fatigue_levels (user_id, fatigue_level, timestamp) 
+        VALUES (:user_id, :fatigue_level, :timestamp)"""
+    )
+    stmt_user = sqlalchemy.text(
+        "UPDATE users SET fatigue_level=:fatigue_level, last_update=:last_update WHERE user_id=:user_id"
+    )
+    try:
+        user_id = request.json['user_id']
+        fatigue_level = request.json['fatigue_level']
+        timestamp = int(request.json['timestamp'])
+        dtime = datetime.datetime.utcfromtimestamp(
+            timestamp).strftime('%Y-%m-%d %H:%M:%S')
+
+        print(f"{timestamp} {user_id} fatigue level: {fatigue_level}")
+
+        with db.connect() as conn:
+            conn.execute(stmt_fatigue,
+                         user_id=user_id,
+                         fatigue_level=fatigue_level,
+                         timestamp=dtime)
+            conn.execute(stmt_user,
+                         user_id=user_id,
+                         fatigue_level=fatigue_level,
+                         last_update=dtime)
+
+            return Response(
+                response="Success",
+                status=200,
+            )
+
+    except Exception as e:
+        logger.exception(e)
+        return Response(
+            status=500,
+            response="Unable to successfully upload data! Please check the "
+            "application logs for more details.",
+        )
+
+
+# peer
+@app.route("/api/v1/peer/group/<group_id>/", methods=['GET'])
+def get_peer_group(group_id):
+    """Receive group_id and query database.
+    Return list of user_id, fatigue."""
+
+    peers = []
+
+    stmt = sqlalchemy.text(
+        "SELECT user_id, fullname, fatigue_level, last_update FROM users WHERE group_id=:group_id"
+    )
+
+    try:
+        with db.connect() as conn:
+            query = conn.execute(stmt, group_id=group_id).fetchall()
+
+        for row in query:
+            timestamp = 0
+            if row[3] is not None:
+                timestamp = int(round(row[3].replace(
+                    tzinfo=datetime.timezone.utc).timestamp()))
+            peers.append(
+                {"user_id": row[0], "fullname": row[1],
+                    "fatigue_level": row[2], "last_update": timestamp}
+            )
+
+        context = {
+            "timestamp": time.time(),
+            "peers": peers
+        }
+        return flask.jsonify(**context)
+
+    except Exception as e:
+        logger.exception(e)
+        return Response(
+            status=500,
+            response="Unable to successfully upload data! Please check the "
+            "application logs for more details.",
+        )
+
+
+@app.route("/api/v1/peer/<user_id>/", methods=['GET'])
+def get_peer(user_id):
+    """Receive user_id and query database. 
+    Return list of timestamp, fatigue_level within a timeframe."""
+
+    stmt = sqlalchemy.text(
+        "SELECT fatigue_level, timestamp FROM fatigue_levels WHERE user_id=:user_id AND timestamp >= now() - INTERVAL 12 HOUR;"
+    )
+
+    try:
+        with db.connect() as conn:
+            query = conn.execute(stmt, user_id=user_id).fetchall()
+
+        data = [dict(row) for row in query]
+
+        context = {
+            "timestamp": time.time(),
+            "fatigue_levels": data
+        }
+        return flask.jsonify(**context)
+
+    except Exception as e:
+        logger.exception(e)
+        return Response(
+            status=500,
+            response="Unable to successfully upload data! Please check the "
+            "application logs for more details.",
+        )
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=8080, debug=True)
+    app.run(debug=True, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
