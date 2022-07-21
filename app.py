@@ -2,7 +2,6 @@ import datetime
 import logging
 import os
 import time
-from typing import Dict
 
 import flask
 from flask import Flask, request, Response
@@ -45,21 +44,19 @@ def migrate_db(db: sqlalchemy.engine.base.Engine) -> None:
     with db.connect() as conn:
 
         # user table
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS users "
-            "(user_id INTEGER AUTO_INCREMENT PRIMARY KEY, "
-            "fullname VARCHAR(40) NOT NULL, "
-            "group_id VARCHAR(20) NOT NULL, "
-            "age INTEGER NOT NULL, "
-            "max_heart_rate INTEGER NOT NULL, "
-            "rest_heart_rate INTEGER NOT NULL, "
-            "hrr_cp INTEGER NOT NULL, "
-            "awc_tot INTEGER NOT NULL, "
-            "k_value INTEGER NOT NULL, "
-            "fatigue_level INTEGER NOT NULL, "
-            "last_update DATETIME, "
-            "created DATETIME DEFAULT CURRENT_TIMESTAMP); "
-        )
+        conn.execute("CREATE TABLE IF NOT EXISTS users "
+                     "(user_id INTEGER AUTO_INCREMENT PRIMARY KEY, "
+                     "fullname VARCHAR(40) NOT NULL, "
+                     "group_id VARCHAR(20) NOT NULL, "
+                     "age INTEGER NOT NULL, "
+                     "max_heart_rate INTEGER NOT NULL, "
+                     "rest_heart_rate INTEGER NOT NULL, "
+                     "hrr_cp INTEGER NOT NULL, "
+                     "awc_tot INTEGER NOT NULL, "
+                     "k_value INTEGER NOT NULL, "
+                     "fatigue_level INTEGER NOT NULL, "
+                     "last_update DATETIME, "
+                     "created DATETIME DEFAULT CURRENT_TIMESTAMP); ")
 
         # heart_rates table
         conn.execute(
@@ -85,7 +82,6 @@ db = init_connection_pool()
 # creates required 'votes' table in database (if it does not exist)
 migrate_db(db)
 
-
 ############
 # REST API #
 ############
@@ -104,33 +100,34 @@ def post_user_login():
     """Receive user name and check the database.
     If exists, return with user info;
     if not exists, return new user."""
-
-    fullname = request.json['fullname']
-
-    with db.connect() as conn:
-        stmt = sqlalchemy.text(
-            "SELECT * FROM users WHERE fullname=:fullname"
+    stmt = sqlalchemy.text("SELECT * FROM users WHERE fullname=:fullname")
+    try:
+        with db.connect() as conn:
+            fullname = request.json['fullname']
+            query = conn.execute(stmt, fullname=fullname).fetchone()
+            if not query:
+                context = {"fullname": fullname, "created": False}
+            else:
+                context = {
+                    "fullname": fullname,
+                    "created": True,
+                    "user_id": query['user_id'],
+                    "group_id": query['group_id'],
+                    "age": query['age'],
+                    "max_heart_rate": query['max_heart_rate'],
+                    "rest_heart_rate": query['rest_heart_rate'],
+                    "hrr_cp": query['hrr_cp'],
+                    "awc_tot": query['awc_tot'],
+                    "k_value": query['k_value'],
+                }
+            return flask.jsonify(**context)
+    except Exception as e:
+        logger.exception(e)
+        return Response(
+            status=500,
+            response="Unable to successfully login user! Please check the "
+            "application logs for more details.",
         )
-        query = conn.execute(stmt, fullname=fullname).fetchone()
-        if not query:
-            context = {
-                "fullname": fullname,
-                "created": False
-            }
-        else:
-            context = {
-                "fullname": fullname,
-                "created": True,
-                "user_id": query['user_id'],
-                "group_id": query['group_id'],
-                "age": query['age'],
-                "max_heart_rate": query['max_heart_rate'],
-                "rest_heart_rate": query['rest_heart_rate'],
-                "hrr_cp": query['hrr_cp'],
-                "awc_tot": query['awc_tot'],
-                "k_value": query['k_value'],
-            }
-        return flask.jsonify(**context)
 
 
 @app.route("/api/v1/user/new/", methods=['POST'])
@@ -138,27 +135,57 @@ def post_user_new():
     """Receive user info, group_id, and create new user in database.
     Return user_id."""
 
-    stmt = sqlalchemy.text(
-        """INSERT INTO users
-        (fullname, group_id, age, max_heart_rate, rest_heart_rate, hrr_cp, awc_tot, k_value, fatigue_level) 
-        VALUES (:fullname, :group_id, :age, :max_heart_rate, :rest_heart_rate, :hrr_cp, :awc_tot, :k_value, -1)"""
-    )
+    stmt_insert = sqlalchemy.text("""INSERT INTO users
+        (fullname, group_id, age, max_heart_rate, rest_heart_rate, hrr_cp, awc_tot, k_value, fatigue_level)
+        VALUES (:fullname, :group_id, :age, :max_heart_rate, :rest_heart_rate, :hrr_cp, :awc_tot, :k_value, -1)""")
+
+    stmt_update = sqlalchemy.text("""UPDATE users 
+        SET fullname = :fullname, group_id = :group_id, 
+        age = :age, max_heart_rate = :max_heart_rate, rest_heart_rate = :rest_heart_rate, 
+        hrr_cp = :hrr_cp, awc_tot = :awc_tot, k_value = :k_value
+        WHERE user_id = :user_id""")
+
     try:
         with db.connect() as conn:
-            result = conn.execute(stmt,
-                                  fullname=request.json['fullname'],
-                                  group_id=request.json['group_id'],
-                                  age=request.json['age'],
-                                  max_heart_rate=request.json['max_heart_rate'],
-                                  rest_heart_rate=request.json['rest_heart_rate'],
-                                  hrr_cp=request.json['hrr_cp'],
-                                  awc_tot=request.json['awc_tot'],
-                                  k_value=request.json['k_value'])
-            user_id = result.lastrowid
-            context = {
-                "timestamp": time.time(),
-                "user_id": user_id
-            }
+            fullname = request.json['fullname']
+            query = conn.execute(sqlalchemy.text(
+                "SELECT * FROM users WHERE fullname=:fullname"), fullname=fullname).fetchone()
+            max_heart_rate = 200 - round(0.7 * float(request.json['age']))
+            if not query:
+                # new user
+                result = conn.execute(
+                    stmt_insert,
+                    fullname=request.json['fullname'],
+                    group_id=request.json['group_id'],
+                    age=request.json['age'],
+                    max_heart_rate=max_heart_rate,
+                    rest_heart_rate=request.json['rest_heart_rate'],
+                    hrr_cp=request.json['hrr_cp'],
+                    awc_tot=request.json['awc_tot'],
+                    k_value=request.json['k_value'])
+                user_id = result.lastrowid
+                context = {
+                    "timestamp": time.time(),
+                    "user_id": user_id,
+                    "max_heart_rate": max_heart_rate
+                }
+            else:
+                result = conn.execute(
+                    stmt_update,
+                    fullname=request.json['fullname'],
+                    group_id=request.json['group_id'],
+                    age=request.json['age'],
+                    max_heart_rate=max_heart_rate,
+                    rest_heart_rate=request.json['rest_heart_rate'],
+                    hrr_cp=request.json['hrr_cp'],
+                    awc_tot=request.json['awc_tot'],
+                    k_value=request.json['k_value'],
+                    user_id=request.json['user_id'])
+                context = {
+                    "timestamp": time.time(),
+                    "user_id": request.json['user_id'],
+                    "max_heart_rate": max_heart_rate
+                }
             return flask.jsonify(**context)
 
     except Exception as e:
@@ -178,9 +205,8 @@ def post_heart_rate():
     print(request.json)
 
     stmt = sqlalchemy.text(
-        """INSERT INTO heart_rates (user_id, heart_rate, timestamp) 
-        VALUES (:user_id, :heart_rate, :timestamp)"""
-    )
+        """INSERT INTO heart_rates (user_id, heart_rate, timestamp)
+        VALUES (:user_id, :heart_rate, :timestamp)""")
     try:
         user_id = request.json['user_id']
         heart_rate = request.json['heart_rate']
@@ -192,7 +218,8 @@ def post_heart_rate():
             conn.execute(stmt,
                          user_id=user_id,
                          heart_rate=heart_rate,
-                         timestamp=datetime.datetime.utcfromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S'))
+                         timestamp=datetime.datetime.utcfromtimestamp(
+                             timestamp).strftime('%Y-%m-%d %H:%M:%S'))
             return Response(
                 response="Success",
                 status=200,
@@ -214,9 +241,8 @@ def post_fatigue():
     print(request.json)
 
     stmt_fatigue = sqlalchemy.text(
-        """INSERT INTO fatigue_levels (user_id, fatigue_level, timestamp) 
-        VALUES (:user_id, :fatigue_level, :timestamp)"""
-    )
+        """INSERT INTO fatigue_levels (user_id, fatigue_level, timestamp)
+        VALUES (:user_id, :fatigue_level, :timestamp)""")
     stmt_user = sqlalchemy.text(
         "UPDATE users SET fatigue_level=:fatigue_level, last_update=:last_update WHERE user_id=:user_id"
     )
@@ -224,8 +250,8 @@ def post_fatigue():
         user_id = request.json['user_id']
         fatigue_level = request.json['fatigue_level']
         timestamp = int(request.json['timestamp'])
-        dtime = datetime.datetime.utcfromtimestamp(
-            timestamp).strftime('%Y-%m-%d %H:%M:%S')
+        dtime = datetime.datetime.utcfromtimestamp(timestamp).strftime(
+            '%Y-%m-%d %H:%M:%S')
 
         print(f"{timestamp} {user_id} fatigue level: {fatigue_level}")
 
@@ -272,17 +298,17 @@ def get_peer_group(group_id):
         for row in query:
             timestamp = 0
             if row[3] is not None:
-                timestamp = int(round(row[3].replace(
-                    tzinfo=datetime.timezone.utc).timestamp()))
-            peers.append(
-                {"user_id": row[0], "fullname": row[1],
-                    "fatigue_level": row[2], "last_update": timestamp}
-            )
+                timestamp = int(
+                    round(row[3].replace(
+                        tzinfo=datetime.timezone.utc).timestamp()))
+            peers.append({
+                "user_id": row[0],
+                "fullname": row[1],
+                "fatigue_level": row[2],
+                "last_update": timestamp
+            })
 
-        context = {
-            "timestamp": time.time(),
-            "peers": peers
-        }
+        context = {"timestamp": time.time(), "peers": peers}
         return flask.jsonify(**context)
 
     except Exception as e:
@@ -296,7 +322,7 @@ def get_peer_group(group_id):
 
 @app.route("/api/v1/peer/<user_id>/", methods=['GET'])
 def get_peer(user_id):
-    """Receive user_id and query database. 
+    """Receive user_id and query database.
     Return list of timestamp, fatigue_level within a timeframe."""
 
     stmt = sqlalchemy.text(
@@ -309,10 +335,7 @@ def get_peer(user_id):
 
         data = [dict(row) for row in query]
 
-        context = {
-            "timestamp": time.time(),
-            "fatigue_levels": data
-        }
+        context = {"timestamp": time.time(), "fatigue_levels": data}
         return flask.jsonify(**context)
 
     except Exception as e:
