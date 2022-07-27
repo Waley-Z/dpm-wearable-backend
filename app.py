@@ -1,4 +1,6 @@
-import datetime
+from datetime import datetime, timezone
+from dateutil import tz
+
 import logging
 import os
 import time
@@ -165,7 +167,6 @@ def post_user_new():
                     k_value=request.json['k_value'])
                 user_id = result.lastrowid
                 context = {
-                    "timestamp": time.time(),
                     "user_id": user_id,
                     "max_heart_rate": max_heart_rate
                 }
@@ -182,7 +183,6 @@ def post_user_new():
                     k_value=request.json['k_value'],
                     user_id=request.json['user_id'])
                 context = {
-                    "timestamp": time.time(),
                     "user_id": request.json['user_id'],
                     "max_heart_rate": max_heart_rate
                 }
@@ -218,7 +218,7 @@ def post_heart_rate():
             conn.execute(stmt,
                          user_id=user_id,
                          heart_rate=heart_rate,
-                         timestamp=datetime.datetime.utcfromtimestamp(
+                         timestamp=datetime.utcfromtimestamp(
                              timestamp).strftime('%Y-%m-%d %H:%M:%S'))
             return Response(
                 response="Success",
@@ -250,7 +250,7 @@ def post_fatigue():
         user_id = request.json['user_id']
         fatigue_level = request.json['fatigue_level']
         timestamp = int(request.json['timestamp'])
-        dtime = datetime.datetime.utcfromtimestamp(timestamp).strftime(
+        dtime = datetime.utcfromtimestamp(timestamp).strftime(
             '%Y-%m-%d %H:%M:%S')
 
         print(f"{timestamp} {user_id} fatigue level: {fatigue_level}")
@@ -300,7 +300,7 @@ def get_peer_group(group_id):
             if row[3] is not None:
                 timestamp = int(
                     round(row[3].replace(
-                        tzinfo=datetime.timezone.utc).timestamp()))
+                        tzinfo=timezone.utc).timestamp()))
             peers.append({
                 "user_id": row[0],
                 "fullname": row[1],
@@ -308,7 +308,7 @@ def get_peer_group(group_id):
                 "last_update": timestamp
             })
 
-        context = {"timestamp": time.time(), "peers": peers}
+        context = {"peers": peers}
         return flask.jsonify(**context)
 
     except Exception as e:
@@ -323,19 +323,56 @@ def get_peer_group(group_id):
 @app.route("/api/v1/peer/<user_id>/", methods=['GET'])
 def get_peer(user_id):
     """Receive user_id and query database.
-    Return list of timestamp, fatigue_level within a timeframe."""
+    Return ranges of fatigue_level today by hour."""
+
+    print("------------")
+
+    abstract = [[-1, -1]] * 24
 
     stmt = sqlalchemy.text(
-        "SELECT fatigue_level, timestamp FROM fatigue_levels WHERE user_id=:user_id AND timestamp >= now() - INTERVAL 12 HOUR;"
+        "SELECT fatigue_level, timestamp FROM fatigue_levels WHERE user_id=:user_id AND timestamp >= now() - INTERVAL 24 HOUR;"
     )
 
     try:
         with db.connect() as conn:
             query = conn.execute(stmt, user_id=user_id).fetchall()
 
-        data = [dict(row) for row in query]
+        # query.sort(key=lambda x: x[1])
 
-        context = {"timestamp": time.time(), "fatigue_levels": data}
+        print(query)
+
+        def utc_to_local(utc_dt):
+            return utc_dt.replace(tzinfo=timezone.utc).astimezone(tz=tz.gettz('America/Detroit'))
+
+        def updateAbstract(hour, fatigue_level):
+            prevMin = abstract[hour][0]
+            prevMax = abstract[hour][1]
+            if prevMin == -1:
+                abstract[hour] = [fatigue_level, fatigue_level]
+            else:
+                abstract[hour][0] = min(prevMin, fatigue_level)
+                abstract[hour][1] = max(prevMax, fatigue_level)
+
+        now = utc_to_local(datetime.utcnow())
+        print("now: ", now)
+
+        for x in query:
+            fatigue_level = x[0]
+            timestamp = utc_to_local(x[1])
+            print(timestamp)
+            if timestamp.date() == now.date():
+                updateAbstract(timestamp.hour, fatigue_level)
+
+        print(abstract)
+
+        data = [{"hour_from_midnight": ind, "fatigue_level_range": ele} for ind, ele in enumerate(abstract)]
+
+        context = {"observations": data}
+        print(context)
+
+        print("------------")
+
+
         return flask.jsonify(**context)
 
     except Exception as e:

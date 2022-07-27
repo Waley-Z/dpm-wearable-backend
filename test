@@ -5,18 +5,18 @@
 #     "http://localhost:8080/api/v1/user/login/" \
 #     fullname="waley"
 
-http \
-    POST \
-    "http://localhost:8080/api/v1/user/new/" \
-    fullname="jack" \
-    group_id=1 \
-    age=21 \
-    max_heart_rate=200 \
-    rest_heart_rate=55 \
-    hrr_cp=25 \
-    awc_tot=200 \
-    k_value=2 \
-    user_id=2
+# http \
+#     POST \
+#     "http://localhost:8080/api/v1/user/new/" \
+#     fullname="jack" \
+#     group_id=1 \
+#     age=21 \
+#     max_heart_rate=200 \
+#     rest_heart_rate=55 \
+#     hrr_cp=25 \
+#     awc_tot=200 \
+#     k_value=2 \
+#     user_id=2
 
 # http \
 #     POST \
@@ -37,12 +37,13 @@ http \
 #     heart_rate=1 \
 #     timestamp=1657776614
 
-# http \
-#     POST \
-#     "http://localhost:8080/api/v1/upload/fatigue/" \
-#     user_id=1 \
-#     fatigue_level=5 \
-#     timestamp=1657746926
+http \
+    POST \
+    "http://localhost:8080/api/v1/upload/fatigue/" \
+    user_id=2 \
+    fatigue_level=50 \
+    timestamp=1658863433
+
 
 # http \
 #     GET \
