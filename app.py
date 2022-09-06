@@ -48,7 +48,8 @@ def migrate_db(db: sqlalchemy.engine.base.Engine) -> None:
         # user table
         conn.execute("CREATE TABLE IF NOT EXISTS users "
                      "(user_id INTEGER AUTO_INCREMENT PRIMARY KEY, "
-                     "fullname VARCHAR(40) NOT NULL, "
+                     "first_name VARCHAR(40) NOT NULL, "
+                     "last_name VARCHAR(40) NOT NULL, "
                      "group_id VARCHAR(20) NOT NULL, "
                      "age INTEGER NOT NULL, "
                      "max_heart_rate INTEGER NOT NULL, "
@@ -102,16 +103,18 @@ def post_user_login():
     """Receive user name and check the database.
     If exists, return with user info;
     if not exists, return new user."""
-    stmt = sqlalchemy.text("SELECT * FROM users WHERE fullname=:fullname")
+    stmt = sqlalchemy.text("SELECT * FROM users WHERE first_name=:first_name AND last_name=:last_name")
     try:
         with db.connect() as conn:
-            fullname = request.json['fullname']
-            query = conn.execute(stmt, fullname=fullname).fetchone()
+            first_name = request.json['first_name']
+            last_name = request.json['last_name']
+            query = conn.execute(stmt, first_name=first_name, last_name=last_name).fetchone()
             if not query:
-                context = {"fullname": fullname, "created": False}
+                context = {"first_name": first_name, "last_name": last_name, "created": False}
             else:
                 context = {
-                    "fullname": fullname,
+                    "first_name": first_name,
+                    "last_name": last_name,
                     "created": True,
                     "user_id": query['user_id'],
                     "group_id": query['group_id'],
@@ -138,26 +141,28 @@ def post_user_new():
     Return user_id."""
 
     stmt_insert = sqlalchemy.text("""INSERT INTO users
-        (fullname, group_id, age, max_heart_rate, rest_heart_rate, hrr_cp, awc_tot, k_value, fatigue_level)
-        VALUES (:fullname, :group_id, :age, :max_heart_rate, :rest_heart_rate, :hrr_cp, :awc_tot, :k_value, -1)""")
+        (first_name, last_name, group_id, age, max_heart_rate, rest_heart_rate, hrr_cp, awc_tot, k_value, fatigue_level)
+        VALUES (:first_name, :last_name, :group_id, :age, :max_heart_rate, :rest_heart_rate, :hrr_cp, :awc_tot, :k_value, -1)""")
 
     stmt_update = sqlalchemy.text("""UPDATE users 
-        SET fullname = :fullname, group_id = :group_id, 
+        SET first_name = :first_name, last_name = :last_name, group_id = :group_id, 
         age = :age, max_heart_rate = :max_heart_rate, rest_heart_rate = :rest_heart_rate, 
         hrr_cp = :hrr_cp, awc_tot = :awc_tot, k_value = :k_value
         WHERE user_id = :user_id""")
 
     try:
         with db.connect() as conn:
-            fullname = request.json['fullname']
+            first_name = request.json['first_name']
+            last_name = request.json['last_name']
             query = conn.execute(sqlalchemy.text(
-                "SELECT * FROM users WHERE fullname=:fullname"), fullname=fullname).fetchone()
+                "SELECT * FROM users WHERE first_name=:first_name AND last_name=:last_name"), first_name=first_name, last_name=last_name).fetchone()
             max_heart_rate = 200 - round(0.7 * float(request.json['age']))
             if not query:
                 # new user
                 result = conn.execute(
                     stmt_insert,
-                    fullname=request.json['fullname'],
+                    first_name=first_name,
+                    last_name=last_name,
                     group_id=request.json['group_id'],
                     age=request.json['age'],
                     max_heart_rate=max_heart_rate,
@@ -173,7 +178,8 @@ def post_user_new():
             else:
                 result = conn.execute(
                     stmt_update,
-                    fullname=request.json['fullname'],
+                    first_name=first_name,
+                    last_name=last_name,
                     group_id=request.json['group_id'],
                     age=request.json['age'],
                     max_heart_rate=max_heart_rate,
@@ -288,7 +294,7 @@ def get_peer_group(group_id):
     peers = []
 
     stmt = sqlalchemy.text(
-        "SELECT user_id, fullname, fatigue_level, last_update FROM users WHERE group_id=:group_id"
+        "SELECT user_id, first_name, fatigue_level, last_update FROM users WHERE group_id=:group_id"
     )
 
     try:
@@ -303,7 +309,7 @@ def get_peer_group(group_id):
                         tzinfo=timezone.utc).timestamp()))
             peers.append({
                 "user_id": row[0],
-                "fullname": row[1],
+                "first_name": row[1],
                 "fatigue_level": row[2],
                 "last_update": timestamp
             })
