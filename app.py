@@ -79,6 +79,16 @@ def migrate_db(db: sqlalchemy.engine.base.Engine) -> None:
             "FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE); "
         )
 
+        # activities table
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS activities "
+            "(user_id INTEGER NOT NULL, "
+            "peer_id INTEGER NOT NULL, "
+            "timestamp DATETIME NOT NULL, "
+            "if_open BOOLEAN NOT NULL, "
+            "FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE); "
+        )
+
 
 # initiate a connection pool to a Cloud SQL database
 db = init_connection_pool()
@@ -271,6 +281,44 @@ def post_fatigue():
                          fatigue_level=fatigue_level,
                          last_update=dtime)
 
+            return Response(
+                response="Success",
+                status=200,
+            )
+
+    except Exception as e:
+        logger.exception(e)
+        return Response(
+            status=500,
+            response="Unable to successfully upload data! Please check the "
+            "application logs for more details.",
+        )
+
+
+@app.route("/api/v1/upload/activity/", methods=['POST'])
+def post_activity():
+    """Receive activity logging and save to database.
+    Return acknowledgement."""
+    print(request.json)
+
+    stmt = sqlalchemy.text(
+        """INSERT INTO activities (user_id, peer_id, timestamp, if_open)
+        VALUES (:user_id, :peer_id, :timestamp, :if_open)""")
+    try:
+        user_id = request.json['user_id']
+        peer_id = request.json['peer_id']
+        timestamp = int(request.json['timestamp'])
+        if_open = bool(request.json['if_open'])
+
+        print(f"{timestamp} {user_id} on {peer_id}. if_open = {if_open}")
+
+        with db.connect() as conn:
+            conn.execute(stmt,
+                         user_id=user_id,
+                         peer_id=peer_id,
+                         timestamp=datetime.utcfromtimestamp(
+                             timestamp).strftime('%Y-%m-%d %H:%M:%S'),
+                         if_open=if_open)
             return Response(
                 response="Success",
                 status=200,
