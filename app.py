@@ -250,9 +250,9 @@ def post_heart_rate():
         )
 
 
-@app.route("/api/v1/upload/fatigue/", methods=['POST'])
-def post_fatigue():
-    """Receive fatigue and user info and save to database.
+@app.route("/api/v1/upload/fatigue_level/", methods=['POST'])
+def post_fatigue_level():
+    """Receive fatigue level and user info and save to database.
     Return acknowledgement."""
     print(request.json)
 
@@ -439,4 +439,4 @@ def get_peer(user_id):
 
 
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+    app.run(debug=False, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))

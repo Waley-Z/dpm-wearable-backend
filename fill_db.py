@@ -14,7 +14,7 @@ def main():
     with open("fill_db", "w+") as f:
         f.write("#!/bin/bash\n")
 
-        for user_id in range(3):
+        for user_id in range(4):
 
             y = 0
             result = []
@@ -32,7 +32,7 @@ def main():
                 f.write(f"""
 http \
 POST \
-"http://localhost:8080/api/v1/upload/fatigue/" \
+"http://localhost:8080/api/v1/upload/fatigue_level/" \
 user_id={user_id+1} \
 fatigue_level={int(result[dt*2])} \
 timestamp={ts}
@@ -40,7 +40,7 @@ timestamp={ts}
                 f.write(f"""
 http \
 POST \
-"http://localhost:8080/api/v1/upload/fatigue/" \
+"http://localhost:8080/api/v1/upload/fatigue_level/" \
 user_id={user_id+1} \
 fatigue_level={int(result[dt*2+1])} \
 timestamp={ts}
