@@ -377,11 +377,12 @@ def get_peer_group(group_id):
 @app.route("/api/v1/peer/<user_id>/", methods=['GET'])
 def get_peer(user_id):
     """Receive user_id and query database.
-    Return ranges of fatigue_level today by hour."""
+    Return ranges and average of fatigue_level today by hour."""
 
     print("------------")
 
-    abstract = [[-1, -1]] * 24
+    # abstract = [[-1, -1]] * 24
+    fatigue_levels = [[] for _ in range(24)]
 
     stmt = sqlalchemy.text(
         "SELECT fatigue_level, timestamp FROM fatigue_levels WHERE user_id=:user_id AND timestamp >= now() - INTERVAL 24 HOUR;"
@@ -391,21 +392,15 @@ def get_peer(user_id):
         with db.connect() as conn:
             query = conn.execute(stmt, user_id=user_id).fetchall()
 
-        # query.sort(key=lambda x: x[1])
-
         print(query)
 
         def utc_to_local(utc_dt):
             return utc_dt.replace(tzinfo=timezone.utc).astimezone(tz=tz.gettz('America/Detroit'))
 
         def updateAbstract(hour, fatigue_level):
-            prevMin = abstract[hour][0]
-            prevMax = abstract[hour][1]
-            if prevMin == -1:
-                abstract[hour] = [fatigue_level, fatigue_level]
-            else:
-                abstract[hour][0] = min(prevMin, fatigue_level)
-                abstract[hour][1] = max(prevMax, fatigue_level)
+            fatigue_levels[hour].append(fatigue_level)
+            print(hour, fatigue_level)
+            print(fatigue_levels)
 
         now = utc_to_local(datetime.utcnow())
         print("now: ", now)
@@ -417,15 +412,13 @@ def get_peer(user_id):
             if timestamp.date() == now.date():
                 updateAbstract(timestamp.hour, fatigue_level)
 
-        print(abstract)
-
-        data = [{"hour_from_midnight": ind, "fatigue_level_range": ele} for ind, ele in enumerate(abstract)]
+        fatigue_levels = [ lst if lst else [-1] for lst in fatigue_levels ]
+        data = [{"hour_from_midnight": ind, "fatigue_level_range": [min(ele), max(ele)], "avg_fatigue_level": sum(ele)/len(ele) } for ind, ele in enumerate(fatigue_levels)]
 
         context = {"observations": data}
         print(context)
 
         print("------------")
-
 
         return flask.jsonify(**context)
 
